@@ -103,19 +103,23 @@ public class FileSystemWatcher {
                     String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMATTER);
 
                     String hashText = "";
+                    String baselineStatus = "";
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE || kind == StandardWatchEventKinds.ENTRY_MODIFY) {
                         if (Files.exists(fullPath)) {
-                            hashText = " | sha256=" + hashService.sha256(fullPath);
+                            String fileHash = hashService.sha256(fullPath);
+                            baselineStatus = " | baselineStatus=" + hashService.updateBaseline(fullPath, fileHash);
+                            hashText = " | sha256=" + fileHash;
                         }
                     }
 
                     System.out.printf(
-                            "[%s] eventType=%s | fileName=%s | fullPath=%s%s%n",
+                            "[%s] eventType=%s | fileName=%s | fullPath=%s%s%s%n",
                             timestamp,
                             kind.name(),
                             fileName,
                             fullPath,
-                            hashText
+                            hashText,
+                            baselineStatus
                     );
                 }
 
