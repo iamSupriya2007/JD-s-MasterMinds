@@ -202,6 +202,45 @@ public class IncidentService {
         return new ArrayList<>(incidents);
     }
 
+    public List<Incident> getRecentIncidentsFromAuditLog() {
+        if (auditLogService == null) {
+            return new ArrayList<>(incidents);
+        }
+
+        List<AuditLogEntry> auditLog = auditLogService.getAuditLog();
+        if (auditLog == null || auditLog.isEmpty()) {
+            return new ArrayList<>(incidents);
+        }
+
+        java.util.Map<String, Incident> incidentById = new java.util.LinkedHashMap<>();
+        for (AuditLogEntry entry : auditLog) {
+            if (entry == null || entry.getIncidentId() == null || entry.getIncidentId().isBlank()) {
+                continue;
+            }
+
+            Incident incident = incidentById.computeIfAbsent(
+                    entry.getIncidentId(),
+                    id -> new Incident(id, entry.getTimestamp(), entry.getTimestamp(), 0, new LinkedHashSet<>())
+            );
+
+            incident.addFile(entry.getFilePath());
+            incident.incrementEventCount();
+            if (entry.getTimestamp() != null) {
+                if (incident.getStartTime() == null || entry.getTimestamp().isBefore(incident.getStartTime())) {
+                    incident.setStartTime(entry.getTimestamp());
+                }
+                if (incident.getLastEventTime() == null || entry.getTimestamp().isAfter(incident.getLastEventTime())) {
+                    incident.setLastEventTime(entry.getTimestamp());
+                }
+            }
+            severityService.applySeverity(incident);
+        }
+
+        return incidentById.values().stream()
+                .sorted(java.util.Comparator.comparing(Incident::getLastEventTime, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())).reversed())
+                .toList();
+    }
+
     public Duration getGroupingWindow() {
         return groupingWindow;
     }

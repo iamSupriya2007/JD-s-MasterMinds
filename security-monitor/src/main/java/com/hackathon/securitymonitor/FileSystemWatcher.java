@@ -23,6 +23,7 @@ public class FileSystemWatcher {
     private static final Logger log = LoggerFactory.getLogger(FileSystemWatcher.class);
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private volatile boolean monitoringActive;
     private final HashService hashService;
     private final IncidentService incidentService;
 
@@ -31,8 +32,13 @@ public class FileSystemWatcher {
         this.incidentService = incidentService;
     }
 
+    public boolean isMonitoringActive() {
+        return monitoringActive;
+    }
+
     @PostConstruct
     public void startWatching() {
+        monitoringActive = true;
         Thread watcherThread = new Thread(this::watchLoop, "file-system-watcher");
         watcherThread.setDaemon(true);
         watcherThread.start();
@@ -63,6 +69,7 @@ public class FileSystemWatcher {
             Files.createDirectories(monitoredFolder);
             log.info("Starting file system watcher for folder: {}", monitoredFolder);
         } catch (IOException e) {
+            monitoringActive = false;
             log.error("Could not create monitored folder: {}", monitoredFolder, e);
             return;
         }
@@ -84,6 +91,7 @@ public class FileSystemWatcher {
                 try {
                     watchKey = watchService.take();
                 } catch (InterruptedException e) {
+                    monitoringActive = false;
                     Thread.currentThread().interrupt();
                     log.warn("Watcher thread interrupted.");
                     return;
@@ -132,11 +140,13 @@ public class FileSystemWatcher {
 
                 boolean isValid = watchKey.reset();
                 if (!isValid) {
+                    monitoringActive = false;
                     log.warn("Watch key is no longer valid. Stopping watcher.");
                     return;
                 }
             }
         } catch (IOException e) {
+            monitoringActive = false;
             log.error("File watcher failed.", e);
         }
     }
