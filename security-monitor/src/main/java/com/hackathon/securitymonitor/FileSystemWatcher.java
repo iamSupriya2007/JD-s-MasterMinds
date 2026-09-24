@@ -24,9 +24,11 @@ public class FileSystemWatcher {
     private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final HashService hashService;
+    private final IncidentService incidentService;
 
-    public FileSystemWatcher(HashService hashService) {
+    public FileSystemWatcher(HashService hashService, IncidentService incidentService) {
         this.hashService = hashService;
+        this.incidentService = incidentService;
     }
 
     @PostConstruct
@@ -100,7 +102,8 @@ public class FileSystemWatcher {
                     }
 
                     Path fullPath = monitoredFolder.resolve(fileName);
-                    String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMATTER);
+                    LocalDateTime eventTime = LocalDateTime.now();
+                    String timestamp = eventTime.format(TIMESTAMP_FORMATTER);
 
                     String hashText = "";
                     String baselineStatus = "";
@@ -109,6 +112,7 @@ public class FileSystemWatcher {
                             String fileHash = hashService.sha256(fullPath);
                             baselineStatus = " | baselineStatus=" + hashService.updateBaseline(fullPath, fileHash);
                             hashText = " | sha256=" + fileHash;
+                            incidentService.recordEvent(fullPath, eventTime);
                         }
                     }
 
