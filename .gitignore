@@ -4,3 +4,4 @@ target/
 .vscode/
 *.class
 .env
+security-monitor/monitored-folder/
