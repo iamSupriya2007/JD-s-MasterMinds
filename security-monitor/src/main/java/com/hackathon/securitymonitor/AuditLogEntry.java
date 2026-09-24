@@ -2,7 +2,14 @@ package com.hackathon.securitymonitor;
 
 import java.time.LocalDateTime;
 
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+@Document(collection = "audit_logs")
 public class AuditLogEntry {
+
+    @Id
+    private String id;
 
     private long sequenceNumber;
     private LocalDateTime timestamp;
@@ -26,6 +33,14 @@ public class AuditLogEntry {
         this.severity = severity;
         this.previousHash = previousHash;
         this.currentHash = currentHash;
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public void setId(String id) {
+        this.id = id;
     }
 
     public long getSequenceNumber() {

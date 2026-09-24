@@ -1,9 +1,16 @@
 package com.hackathon.securitymonitor;
 
+import org.bson.Document;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -12,9 +19,36 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 class IncidentServiceTest {
 
+    private IncidentService newIncidentService() {
+        AuditLogService auditLogService = Mockito.mock(AuditLogService.class);
+        return new IncidentService(10, new SeverityService(), auditLogService);
+    }
+
+    @Test
+    void incidentNumberingContinuesAfterPersistedIncidentIds() {
+        AuditLogService auditLogService = Mockito.mock(AuditLogService.class);
+        MongoTemplate mongoTemplate = Mockito.mock(MongoTemplate.class);
+        Mockito.when(auditLogService.getAuditLog()).thenReturn(List.of(
+                new AuditLogEntry(1L, LocalDateTime.of(2026, 9, 24, 10, 0, 0), "INC-1", "FILE_CHANGED", "/tmp/fileA.txt", "LOW", "GENESIS", "hash-1"),
+                new AuditLogEntry(2L, LocalDateTime.of(2026, 9, 24, 10, 0, 1), "INC-2", "FILE_CHANGED", "/tmp/fileB.txt", "LOW", "hash-1", "hash-2")
+        ));
+        Mockito.when(mongoTemplate.findAndModify(
+                org.mockito.ArgumentMatchers.any(Query.class),
+                org.mockito.ArgumentMatchers.any(Update.class),
+                org.mockito.ArgumentMatchers.any(FindAndModifyOptions.class),
+                org.mockito.ArgumentMatchers.eq(Document.class),
+                org.mockito.ArgumentMatchers.eq("incident_counters")))
+                .thenReturn(new Document("_id", "incident_sequence").append("value", 3L));
+
+        IncidentService incidentService = new IncidentService(10, new SeverityService(), auditLogService, mongoTemplate);
+        Incident incident = incidentService.recordEvent(Path.of("/tmp/fileC.txt"), LocalDateTime.of(2026, 9, 24, 10, 0, 2));
+
+        assertEquals("INC-3", incident.getIncidentId());
+    }
+
     @Test
     void multipleEventsWithinTenSecondsAreGroupedIntoOneIncident() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident firstIncident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -29,7 +63,7 @@ class IncidentServiceTest {
 
     @Test
     void eventAfterTenSecondWindowCreatesNewIncident() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident firstIncident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -42,7 +76,7 @@ class IncidentServiceTest {
 
     @Test
     void sameFileDoesNotDuplicateInAffectedFiles() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident firstIncident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -57,7 +91,7 @@ class IncidentServiceTest {
 
     @Test
     void oneEventOneFileIsLowSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         Incident incident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), LocalDateTime.of(2026, 9, 24, 10, 0, 1));
 
         assertEquals("LOW", incident.getSeverity());
@@ -65,7 +99,7 @@ class IncidentServiceTest {
 
     @Test
     void threeEventsThreeFilesIsMediumSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -77,7 +111,7 @@ class IncidentServiceTest {
 
     @Test
     void sixEventsSixFilesIsHighSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = null;
@@ -90,7 +124,7 @@ class IncidentServiceTest {
 
     @Test
     void moreThanTenEventsIsCriticalSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = null;
@@ -103,7 +137,7 @@ class IncidentServiceTest {
 
     @Test
     void moreThanTenAffectedFilesIsCriticalSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = null;
@@ -116,7 +150,7 @@ class IncidentServiceTest {
 
     @Test
     void severityReasonIsNotEmpty() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -128,7 +162,7 @@ class IncidentServiceTest {
 
     @Test
     void eventCountTwoAndAffectedFilesSevenResultsInHighSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -142,7 +176,7 @@ class IncidentServiceTest {
 
     @Test
     void eventCountTwelveAndAffectedFilesOneResultsInCriticalSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = null;
@@ -155,7 +189,7 @@ class IncidentServiceTest {
 
     @Test
     void eventCountTwoAndAffectedFilesElevenResultsInCriticalSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = incidentService.recordEvent(Path.of("/tmp/fileA.txt"), baseTime.plusSeconds(1));
@@ -169,7 +203,7 @@ class IncidentServiceTest {
 
     @Test
     void eventCountElevenAndAffectedFilesOneResultsInCriticalSeverity() {
-        IncidentService incidentService = new IncidentService(10);
+        IncidentService incidentService = newIncidentService();
         LocalDateTime baseTime = LocalDateTime.of(2026, 9, 24, 10, 0, 0);
 
         Incident incident = null;

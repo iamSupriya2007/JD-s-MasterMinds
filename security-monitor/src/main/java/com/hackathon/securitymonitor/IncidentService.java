@@ -1,7 +1,14 @@
 package com.hackathon.securitymonitor;
 
+import org.bson.Document;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
@@ -10,39 +17,57 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class IncidentService {
 
+    private static final String INCIDENT_SEQUENCE_COUNTER_ID = "incident_sequence";
+    private static final String INCIDENT_COUNTER_COLLECTION = "incident_counters";
+    private static final Pattern INCIDENT_ID_PATTERN = Pattern.compile("INC-(\\d+)");
+
     private final Duration groupingWindow;
     private final SeverityService severityService;
     private final AuditLogService auditLogService;
+    private final MongoTemplate mongoTemplate;
     private final List<Incident> incidents = new ArrayList<>();
     private final AtomicLong incidentCounter = new AtomicLong(1);
 
     @Autowired
     public IncidentService(@Value("${security-monitor.grouping-window-seconds:10}") long groupingWindowSeconds,
+                           AuditLogService auditLogService,
+                           MongoTemplate mongoTemplate) {
+        this(groupingWindowSeconds, new SeverityService(), auditLogService, mongoTemplate);
+    }
+
+    public IncidentService(@Value("${security-monitor.grouping-window-seconds:10}") long groupingWindowSeconds,
                            AuditLogService auditLogService) {
-        this(groupingWindowSeconds, new SeverityService(), auditLogService);
+        this(groupingWindowSeconds, new SeverityService(), auditLogService, null);
     }
 
     public IncidentService(@Value("${security-monitor.grouping-window-seconds:10}") long groupingWindowSeconds) {
-        this(groupingWindowSeconds, new SeverityService(), new AuditLogService());
+        this(groupingWindowSeconds, new SeverityService(), null, null);
     }
 
     public IncidentService(long groupingWindowSeconds, SeverityService severityService) {
-        this(groupingWindowSeconds, severityService, new AuditLogService());
+        this(groupingWindowSeconds, severityService, null, null);
     }
 
     public IncidentService(long groupingWindowSeconds, SeverityService severityService, AuditLogService auditLogService) {
+        this(groupingWindowSeconds, severityService, auditLogService, null);
+    }
+
+    public IncidentService(long groupingWindowSeconds, SeverityService severityService, AuditLogService auditLogService, MongoTemplate mongoTemplate) {
         this.groupingWindow = Duration.ofSeconds(groupingWindowSeconds);
         this.severityService = severityService;
-        this.auditLogService = auditLogService != null ? auditLogService : new AuditLogService();
+        this.auditLogService = auditLogService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     public IncidentService() {
-        this(10, new SeverityService(), new AuditLogService());
+        this(10, new SeverityService(), null, null);
     }
 
     public Incident recordEvent(Path filePath, LocalDateTime eventTime) {
@@ -62,8 +87,9 @@ public class IncidentService {
             return activeIncident;
         }
 
+        long nextIncidentNumber = nextIncidentNumber();
         Incident incident = new Incident(
-                "INC-" + incidentCounter.getAndIncrement(),
+                "INC-" + nextIncidentNumber,
                 eventTime,
                 eventTime,
                 1,
@@ -95,6 +121,81 @@ public class IncidentService {
         }
 
         return null;
+    }
+
+    private long nextIncidentNumber() {
+        long maxIncidentNumber = 0L;
+        if (auditLogService != null) {
+            for (AuditLogEntry entry : auditLogService.getAuditLog()) {
+                Matcher matcher = INCIDENT_ID_PATTERN.matcher(entry.getIncidentId() == null ? "" : entry.getIncidentId());
+                if (matcher.matches()) {
+                    maxIncidentNumber = Math.max(maxIncidentNumber, Long.parseLong(matcher.group(1)));
+                }
+            }
+        }
+
+        long resolvedStart = Math.max(maxIncidentNumber, incidentCounter.get() - 1);
+
+        if (mongoTemplate == null) {
+            long nextValue = resolvedStart + 1;
+            incidentCounter.set(nextValue);
+            return nextValue;
+        }
+
+        for (int attempt = 0; attempt < 10; attempt++) {
+            Document existing = mongoTemplate.findOne(
+                    Query.query(Criteria.where("_id").is(INCIDENT_SEQUENCE_COUNTER_ID)),
+                    Document.class,
+                    INCIDENT_COUNTER_COLLECTION
+            );
+
+            if (existing == null) {
+                try {
+                    long nextValue = resolvedStart + 1;
+                    mongoTemplate.insert(
+                            new Document("_id", INCIDENT_SEQUENCE_COUNTER_ID).append("value", nextValue),
+                            INCIDENT_COUNTER_COLLECTION
+                    );
+                    incidentCounter.set(nextValue);
+                    return nextValue;
+                } catch (DuplicateKeyException ignored) {
+                    // another request created the counter between the findOne and insert.
+                }
+                continue;
+            }
+
+            long currentCounterValue = ((Number) existing.get("value")).longValue();
+            if (currentCounterValue <= resolvedStart) {
+                Document corrected = mongoTemplate.findAndModify(
+                        Query.query(Criteria.where("_id").is(INCIDENT_SEQUENCE_COUNTER_ID)),
+                        new Update().set("value", resolvedStart + 1),
+                        FindAndModifyOptions.options().returnNew(true),
+                        Document.class,
+                        INCIDENT_COUNTER_COLLECTION
+                );
+                if (corrected != null && corrected.get("value") != null) {
+                    long nextValue = ((Number) corrected.get("value")).longValue();
+                    incidentCounter.set(nextValue);
+                    return nextValue;
+                }
+            }
+
+            Document updated = mongoTemplate.findAndModify(
+                    Query.query(Criteria.where("_id").is(INCIDENT_SEQUENCE_COUNTER_ID)),
+                    new Update().inc("value", 1),
+                    FindAndModifyOptions.options().returnNew(true),
+                    Document.class,
+                    INCIDENT_COUNTER_COLLECTION
+            );
+
+            if (updated != null && updated.get("value") != null) {
+                long nextValue = ((Number) updated.get("value")).longValue();
+                incidentCounter.set(nextValue);
+                return nextValue;
+            }
+        }
+
+        throw new IllegalStateException("Unable to allocate a unique incident number for " + INCIDENT_SEQUENCE_COUNTER_ID);
     }
 
     public List<Incident> getIncidents() {
