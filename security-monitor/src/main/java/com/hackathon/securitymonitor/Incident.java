@@ -11,6 +11,8 @@ public class Incident {
     private LocalDateTime lastEventTime;
     private int eventCount;
     private Set<String> affectedFiles = new LinkedHashSet<>();
+    private String severity;
+    private String severityReason;
 
     public Incident() {
     }
@@ -69,5 +71,21 @@ public class Incident {
 
     public void incrementEventCount() {
         eventCount++;
+    }
+
+    public String getSeverity() {
+        return severity;
+    }
+
+    public void setSeverity(String severity) {
+        this.severity = severity;
+    }
+
+    public String getSeverityReason() {
+        return severityReason;
+    }
+
+    public void setSeverityReason(String severityReason) {
+        this.severityReason = severityReason;
     }
 }

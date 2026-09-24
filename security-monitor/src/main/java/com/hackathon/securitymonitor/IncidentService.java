@@ -15,15 +15,21 @@ import java.util.concurrent.atomic.AtomicLong;
 public class IncidentService {
 
     private final Duration groupingWindow;
+    private final SeverityService severityService;
     private final List<Incident> incidents = new ArrayList<>();
     private final AtomicLong incidentCounter = new AtomicLong(1);
 
     public IncidentService(@Value("${security-monitor.grouping-window-seconds:10}") long groupingWindowSeconds) {
+        this(groupingWindowSeconds, new SeverityService());
+    }
+
+    public IncidentService(long groupingWindowSeconds, SeverityService severityService) {
         this.groupingWindow = Duration.ofSeconds(groupingWindowSeconds);
+        this.severityService = severityService;
     }
 
     public IncidentService() {
-        this(10);
+        this(10, new SeverityService());
     }
 
     public Incident recordEvent(Path filePath, LocalDateTime eventTime) {
@@ -34,6 +40,7 @@ public class IncidentService {
             activeIncident.addFile(normalizedPath);
             activeIncident.incrementEventCount();
             activeIncident.setLastEventTime(eventTime);
+            severityService.applySeverity(activeIncident);
             return activeIncident;
         }
 
@@ -46,6 +53,7 @@ public class IncidentService {
         );
         incident.addFile(normalizedPath);
         incidents.add(incident);
+        severityService.applySeverity(incident);
         return incident;
     }
 
