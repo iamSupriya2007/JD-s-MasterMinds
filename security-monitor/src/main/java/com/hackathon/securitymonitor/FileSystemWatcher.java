@@ -107,13 +107,16 @@ public class FileSystemWatcher {
 
                     String hashText = "";
                     String baselineStatus = "";
+
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE || kind == StandardWatchEventKinds.ENTRY_MODIFY) {
                         if (Files.exists(fullPath)) {
                             String fileHash = hashService.sha256(fullPath);
                             baselineStatus = " | baselineStatus=" + hashService.updateBaseline(fullPath, fileHash);
                             hashText = " | sha256=" + fileHash;
-                            incidentService.recordEvent(fullPath, eventTime);
                         }
+                        incidentService.recordEvent(fullPath, eventTime, kind.name());
+                    } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
+                        incidentService.recordEvent(fullPath, eventTime, kind.name());
                     }
 
                     System.out.printf(
