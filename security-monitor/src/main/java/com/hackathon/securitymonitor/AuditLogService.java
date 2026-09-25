@@ -199,9 +199,14 @@ public class AuditLogService {
                     previousHash
             ).equals(entry.getCurrentHash());
 
-            if (matchesLegacyHash || matchesCanonicalHash) {
+            if (matchesLegacyHash && !matchesCanonicalHash) {
                 sawValidRecord = true;
                 legacyPrefixLength = index + 1;
+                previousHash = entry.getCurrentHash();
+                continue;
+            }
+
+            if (matchesCanonicalHash) {
                 previousHash = entry.getCurrentHash();
                 continue;
             }
